@@ -25,9 +25,11 @@ struct file_operations onebyte_fops = {
 };
 
 char *onebyte_data = NULL;
+size_t remaining_bytes = 0;
 
 int onebyte_open(struct inode *inode, struct file *filep)
 {
+    remaining_bytes = 1;
     return 0; // always successful
 }
 
@@ -38,6 +40,9 @@ int onebyte_release(struct inode *inode, struct file *filep)
 
 ssize_t onebyte_read(struct file *filep, char *buf, size_t count, loff_t *f_pos)
 {
+    if(remaining_bytes == 0)
+        return 0;
+    
     int errors_count = copy_to_user(buf, onebyte_data, 1);
     
     if(errors_count != 0)
@@ -47,6 +52,7 @@ ssize_t onebyte_read(struct file *filep, char *buf, size_t count, loff_t *f_pos)
     }
     else
     {
+        remaining_bytes--;
         return 1;
     }
 }
