@@ -38,7 +38,17 @@ int onebyte_release(struct inode *inode, struct file *filep)
 
 ssize_t onebyte_read(struct file *filep, char *buf, size_t count, loff_t *f_pos)
 {
-    /*please complete the function on your own*/
+    int errors_count = copy_to_user(buf, onebyte_data, 1);
+    
+    if(errors_count != 0)
+    {
+        printk(KERN_ALERT "Onebyte device : failed to read.\n");
+        return -EFAULT;
+    }
+    else
+    {
+        return 1;
+    }
 }
 
 ssize_t onebyte_write(struct file *filep, const char *buf, size_t count, loff_t *f_pos)
