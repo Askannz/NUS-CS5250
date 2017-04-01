@@ -17,6 +17,7 @@ int scull_release(struct inode *inode, struct file *filep);
 ssize_t scull_read(struct file *filep, char *buf, size_t count, loff_t *f_pos);
 ssize_t scull_write(struct file *filep, const char *buf, size_t count, loff_t *f_pos);
 static void scull_exit(void);
+loff_t scull_llseek(struct file *filep, loff_t offset, int whence);
 
 /* definition of file_operation structure */
 struct file_operations scull_fops = {
@@ -24,6 +25,7 @@ struct file_operations scull_fops = {
     write: scull_write,
     open: scull_open,
     release: scull_release,
+	llseek: scull_llseek
 };
 
 char *data = NULL;
@@ -158,6 +160,39 @@ static void scull_exit(void)
     printk(KERN_ALERT "4MB device module is unloaded\n");
 }
 
+loff_t scull_llseek(struct file *filep, loff_t offset, int whence)
+{
+	loff_t *pPos = (loff_t*) filep->private_data;
+	
+	loff_t newPos = 0;
+
+	if(whence == SEEK_CUR)
+		newPos = *pPos + offset;
+	else if(whence == SEEK_SET)
+		newPos = offset;
+	else if(whence == SEEK_END)
+		newPos = data_size + offset;
+	else
+		return -EINVAL; // Invalid whence argument
+
+	if(newPos < 0)
+		return -EINVAL; // Invalid offset argument
+	else if(newPos >= data_size) // If offset goes beyond the end of the file
+	{
+		if(newPos > SCULL_SIZE)
+			return -EINVAL;
+		else
+		{	
+			// Expand the file and pad with zeroes (this is the expected behavior for lseek)
+			memset(&data[data_size], 0, newPos - data_size);
+			data_size = newPos;
+		}
+	}	
+	
+	*pPos = newPos;
+
+	return *pPos;
+}
 
 MODULE_LICENSE("GPL");
 module_init(scull_init);
