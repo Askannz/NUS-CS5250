@@ -11,10 +11,17 @@
 #define MAJOR_NUMBER 61
 
 #define SCULL_IOC_MAGIC 'k'
+
 #define SCULL_HELLO_NR 1
-#define SCULL_MAX_NR 1
+#define SCULL_WRITE_NR 2
+#define SCULL_READ_NR 3
+#define SCULL_MAX_NR 3
+
+#define SCULL_DEV_MSG_SIZE 16
 
 #define SCULL_HELLO _IO(SCULL_IOC_MAGIC, SCULL_HELLO_NR)
+#define SCULL_WRITE _IOW(SCULL_IOC_MAGIC, SCULL_WRITE_NR, char*)
+#define SCULL_READ _IOR(SCULL_IOC_MAGIC, SCULL_READ_NR, char*)
 
 #define SCULL_SIZE 4000000
 
@@ -24,7 +31,7 @@ int scull_release(struct inode *inode, struct file *filep);
 ssize_t scull_read(struct file *filep, char *buf, size_t count, loff_t *f_pos);
 ssize_t scull_write(struct file *filep, const char *buf, size_t count, loff_t *f_pos);
 static void scull_exit(void);
-loff_t scull_llseek(struct file *filep, loff_t offset, int whence);
+static loff_t scull_llseek(struct file *filep, loff_t offset, int whence);
 long scull_ioctl(struct file *filep, unsigned int cmd, unsigned long arg);
 
 /* definition of file_operation structure */
@@ -39,6 +46,8 @@ struct file_operations scull_fops = {
 
 char *data = NULL;
 size_t data_size = 0;
+
+char *dev_msg;
 
 int scull_open(struct inode *inode, struct file *filep)
 {
@@ -143,7 +152,8 @@ static int scull_init(void)
     // the type of memory to be allocated.
     // To release the memory allocated by kmalloc, use kfree.
     data = kmalloc(sizeof(char) * SCULL_SIZE, GFP_KERNEL);
-    if (!data) {
+    dev_msg = kmalloc(sizeof(char) * SCULL_DEV_MSG_SIZE, GFP_KERNEL);
+    if (!data || !dev_msg) {
         scull_exit();
         // cannot allocate memory
         // return no memory error, negative signify a failure
@@ -164,12 +174,17 @@ static void scull_exit(void)
         data = NULL;
     }
     
+	if (dev_msg) {
+        kfree(dev_msg);
+        dev_msg = NULL;
+    }
+    
     // unregister the device
     unregister_chrdev(MAJOR_NUMBER, "scull");
     printk(KERN_ALERT "4MB device module is unloaded\n");
 }
 
-loff_t scull_llseek(struct file *filep, loff_t offset, int whence)
+static loff_t scull_llseek(struct file *filep, loff_t offset, int whence)
 {
 	printk(KERN_ALERT "LSEEK");
 	loff_t *pPos = (loff_t*) filep->private_data;
@@ -206,7 +221,8 @@ loff_t scull_llseek(struct file *filep, loff_t offset, int whence)
 
 long scull_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 {
-	int err = 0, tmp, retval = 0;
+	int err = 0, retval = 0;
+	char *user_buffer = NULL;
 
 	if(_IOC_TYPE(cmd) != SCULL_IOC_MAGIC ||
 		_IOC_NR(cmd) > SCULL_MAX_NR)
@@ -224,6 +240,21 @@ long scull_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 	{
 		case SCULL_HELLO :
 			printk(KERN_WARNING "Hello\n");
+			break;
+
+		case SCULL_WRITE :
+			user_buffer = (char*)arg;
+			memcpy(dev_msg, user_buffer, SCULL_DEV_MSG_SIZE);
+			break;
+
+		case SCULL_READ :
+			user_buffer = (char*)arg;
+			int errors_count = copy_to_user(user_buffer, dev_msg, SCULL_DEV_MSG_SIZE);	
+			if(errors_count != 0)
+			{
+				printk(KERN_ALERT "4MB device : failed to read dev_msg.\n");
+				return -EFAULT;
+			}
 			break;
 
 		default:
