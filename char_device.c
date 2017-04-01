@@ -7,7 +7,14 @@
 #include <linux/fs.h>
 #include <linux/proc_fs.h>
 #include <asm/uaccess.h>
+#include <linux/ioctl.h>
 #define MAJOR_NUMBER 61
+
+#define SCULL_IOC_MAGIC 'k'
+#define SCULL_HELLO_NR 1
+#define SCULL_MAX_NR 1
+
+#define SCULL_HELLO _IO(SCULL_IOC_MAGIC, SCULL_HELLO_NR)
 
 #define SCULL_SIZE 4000000
 
@@ -18,6 +25,7 @@ ssize_t scull_read(struct file *filep, char *buf, size_t count, loff_t *f_pos);
 ssize_t scull_write(struct file *filep, const char *buf, size_t count, loff_t *f_pos);
 static void scull_exit(void);
 loff_t scull_llseek(struct file *filep, loff_t offset, int whence);
+long scull_ioctl(struct file *filep, unsigned int cmd, unsigned long arg);
 
 /* definition of file_operation structure */
 struct file_operations scull_fops = {
@@ -25,7 +33,8 @@ struct file_operations scull_fops = {
     write: scull_write,
     open: scull_open,
     release: scull_release,
-	llseek: scull_llseek
+	llseek: scull_llseek,
+	unlocked_ioctl: scull_ioctl
 };
 
 char *data = NULL;
@@ -162,6 +171,7 @@ static void scull_exit(void)
 
 loff_t scull_llseek(struct file *filep, loff_t offset, int whence)
 {
+	printk(KERN_ALERT "LSEEK");
 	loff_t *pPos = (loff_t*) filep->private_data;
 	
 	loff_t newPos = 0;
@@ -192,6 +202,35 @@ loff_t scull_llseek(struct file *filep, loff_t offset, int whence)
 	*pPos = newPos;
 
 	return *pPos;
+}
+
+long scull_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
+{
+	int err = 0, tmp, retval = 0;
+
+	if(_IOC_TYPE(cmd) != SCULL_IOC_MAGIC ||
+		_IOC_NR(cmd) > SCULL_MAX_NR)
+		return -ENOTTY;
+
+	if(_IOC_DIR(cmd) & _IOC_READ)
+		err = !access_ok(VERIFY_WRITE, (void __user*)arg, _IOC_SIZE(cmd));
+	else if(_IOC_DIR(cmd) & _IOC_WRITE)
+		err = !access_ok(VERIFY_READ, (void __user*)arg, _IOC_SIZE(cmd));
+
+	if(err)
+		return -EFAULT;
+
+	switch(cmd)
+	{
+		case SCULL_HELLO :
+			printk(KERN_WARNING "Hello\n");
+			break;
+
+		default:
+			return -ENOTTY;
+	}
+
+	return retval;
 }
 
 MODULE_LICENSE("GPL");
