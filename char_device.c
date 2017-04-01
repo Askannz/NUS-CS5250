@@ -15,13 +15,15 @@
 #define SCULL_HELLO_NR 1
 #define SCULL_WRITE_NR 2
 #define SCULL_READ_NR 3
-#define SCULL_MAX_NR 3
+#define SCULL_READ_WRITE_NR 4
+#define SCULL_MAX_NR 4
 
 #define SCULL_DEV_MSG_SIZE 16
 
 #define SCULL_HELLO _IO(SCULL_IOC_MAGIC, SCULL_HELLO_NR)
 #define SCULL_WRITE _IOW(SCULL_IOC_MAGIC, SCULL_WRITE_NR, char*)
 #define SCULL_READ _IOR(SCULL_IOC_MAGIC, SCULL_READ_NR, char*)
+#define SCULL_READ_WRITE _IOWR(SCULL_IOC_MAGIC, SCULL_READ_WRITE_NR, char*)
 
 #define SCULL_SIZE 4000000
 
@@ -83,6 +85,8 @@ int scull_release(struct inode *inode, struct file *filep)
 ssize_t scull_read(struct file *filep, char *buf, size_t count, loff_t *f_pos)
 {
     size_t size_copy = 0;
+	int errors_count;
+
 	loff_t *pPos = (loff_t*) filep->private_data;
 	
     if(*pPos == data_size || count == 0)
@@ -93,7 +97,7 @@ ssize_t scull_read(struct file *filep, char *buf, size_t count, loff_t *f_pos)
     else
 		size_copy = data_size - *pPos;
     
-    int errors_count = copy_to_user(buf, &data[*pPos], size_copy);
+    errors_count = copy_to_user(buf, &data[*pPos], size_copy);
     
     if(errors_count != 0)
     {
@@ -223,18 +227,22 @@ long scull_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 {
 	int err = 0, retval = 0;
 	char *user_buffer = NULL;
+	char tmp[SCULL_DEV_MSG_SIZE];
+	int errors_count;
 
 	if(_IOC_TYPE(cmd) != SCULL_IOC_MAGIC ||
 		_IOC_NR(cmd) > SCULL_MAX_NR)
 		return -ENOTTY;
-
+	
 	if(_IOC_DIR(cmd) & _IOC_READ)
 		err = !access_ok(VERIFY_WRITE, (void __user*)arg, _IOC_SIZE(cmd));
-	else if(_IOC_DIR(cmd) & _IOC_WRITE)
+	if(_IOC_DIR(cmd) & _IOC_WRITE)
 		err = !access_ok(VERIFY_READ, (void __user*)arg, _IOC_SIZE(cmd));
 
 	if(err)
 		return -EFAULT;
+	
+	printk(KERN_ALERT "SCULL_READ_WRITE\n");
 
 	switch(cmd)
 	{
@@ -249,10 +257,23 @@ long scull_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 
 		case SCULL_READ :
 			user_buffer = (char*)arg;
-			int errors_count = copy_to_user(user_buffer, dev_msg, SCULL_DEV_MSG_SIZE);	
+			errors_count = copy_to_user(user_buffer, dev_msg, SCULL_DEV_MSG_SIZE);	
 			if(errors_count != 0)
 			{
-				printk(KERN_ALERT "4MB device : failed to read dev_msg.\n");
+				printk(KERN_ALERT "4MB device : failed to read dev_msg in READ ioctl.\n");
+				return -EFAULT;
+			}
+			break;
+		
+		case SCULL_READ_WRITE :
+			user_buffer = (char*)arg;
+			memcpy(tmp, dev_msg, SCULL_DEV_MSG_SIZE);
+			memcpy(dev_msg, user_buffer, SCULL_DEV_MSG_SIZE);
+
+			errors_count = copy_to_user(user_buffer, tmp, SCULL_DEV_MSG_SIZE);	
+			if(errors_count != 0)
+			{
+				printk(KERN_ALERT "4MB device : failed to read dev_msg in READ_WRITE ioctl.\n");
 				return -EFAULT;
 			}
 			break;
@@ -260,7 +281,8 @@ long scull_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 		default:
 			return -ENOTTY;
 	}
-
+	
+    printk(KERN_ALERT "SCULL : dev_msg = %s\n", dev_msg);
 	return retval;
 }
 
