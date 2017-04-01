@@ -9,110 +9,156 @@
 #include <asm/uaccess.h>
 #define MAJOR_NUMBER 61
 
+#define SCULL_SIZE 4000000
+
 /* forward declaration */
-int onebyte_open(struct inode *inode, struct file *filep);
-int onebyte_release(struct inode *inode, struct file *filep);
-ssize_t onebyte_read(struct file *filep, char *buf, size_t count, loff_t *f_pos);
-ssize_t onebyte_write(struct file *filep, const char *buf, size_t count, loff_t *f_pos);
-static void onebyte_exit(void);
+int scull_open(struct inode *inode, struct file *filep);
+int scull_release(struct inode *inode, struct file *filep);
+ssize_t scull_read(struct file *filep, char *buf, size_t count, loff_t *f_pos);
+ssize_t scull_write(struct file *filep, const char *buf, size_t count, loff_t *f_pos);
+static void scull_exit(void);
 
 /* definition of file_operation structure */
-struct file_operations onebyte_fops = {
-    read: onebyte_read,
-    write: onebyte_write,
-    open: onebyte_open,
-    release: onebyte_release
+struct file_operations scull_fops = {
+    read: scull_read,
+    write: scull_write,
+    open: scull_open,
+    release: scull_release,
 };
 
-char *onebyte_data = NULL;
-size_t remaining_bytes = 0;
+char *data = NULL;
+size_t data_size = 0;
 
-int onebyte_open(struct inode *inode, struct file *filep)
+int scull_open(struct inode *inode, struct file *filep)
 {
-    remaining_bytes = 1;
+	filep->private_data = kmalloc(sizeof(loff_t), GFP_KERNEL);
+	if(filep->private_data == NULL)
+	{
+		printk(KERN_ALERT "Failed to allocate private data");
+		return -EFAULT;
+	}
+	
+	loff_t *pPos = (loff_t*) filep->private_data;
+	*pPos = 0;
+	
+	if((filep->f_flags & O_ACCMODE) == O_WRONLY || (filep->f_flags & O_ACCMODE) == O_RDWR)
+	{
+		printk(KERN_ALERT "Opened in write mode\n");
+		data_size = 0;
+	}
+	else
+	{		
+		printk(KERN_ALERT "Opened in read mode\n");
+	}
+
     return 0; // always successful
 }
 
-int onebyte_release(struct inode *inode, struct file *filep)
+int scull_release(struct inode *inode, struct file *filep)
 {
+	kfree(filep->private_data);
     return 0; // always successful
 }
 
-ssize_t onebyte_read(struct file *filep, char *buf, size_t count, loff_t *f_pos)
+ssize_t scull_read(struct file *filep, char *buf, size_t count, loff_t *f_pos)
 {
-    if(remaining_bytes == 0)
+    size_t size_copy = 0;
+	loff_t *pPos = (loff_t*) filep->private_data;
+	
+    if(*pPos == data_size || count == 0)
         return 0;
+
+    if(count + *pPos <= data_size)
+		size_copy = count;
+    else
+		size_copy = data_size - *pPos;
     
-    int errors_count = copy_to_user(buf, onebyte_data, 1);
+    int errors_count = copy_to_user(buf, &data[*pPos], size_copy);
     
     if(errors_count != 0)
     {
-        printk(KERN_ALERT "Onebyte device : failed to read.\n");
+        printk(KERN_ALERT "4MB device : failed to read.\n");
         return -EFAULT;
     }
     else
     {
-        remaining_bytes--;
-        return 1;
+        *pPos += size_copy;
+        return size_copy;
     }
 }
 
-ssize_t onebyte_write(struct file *filep, const char *buf, size_t count, loff_t *f_pos)
+ssize_t scull_write(struct file *filep, const char *buf, size_t count, loff_t *f_pos)
 {
+    int not_enough_space = 0;
+    size_t size_copy = 0;    
+	loff_t *pPos = (loff_t*) filep->private_data;
+
     if(count == 0)
         return 0;
+	
+	if(count + *pPos <= SCULL_SIZE)
+	   size_copy = count;
+	else
+	{
+	    size_copy = SCULL_SIZE - *pPos;
+	    not_enough_space = 1;
+	}
+
+	memcpy(&data[*pPos], buf, size_copy);
+
+	*pPos += size_copy;
+
+	if(*pPos > data_size)
+		data_size = *pPos;
+
+    if(not_enough_space)
+        return -ENOSPC;
     else
-    {
-        *onebyte_data = buf[0];
-        if(count > 1)
-            return -ENOSPC;
-        else
-            return 1;
-    }
+        return size_copy;
 }
 
-static int onebyte_init(void)
+static int scull_init(void)
 {
     int result;
     
     // register the device
-    result = register_chrdev(MAJOR_NUMBER, "onebyte", &onebyte_fops);
+    result = register_chrdev(MAJOR_NUMBER, "scull", &scull_fops);
     if (result < 0) {
         return result;
     }
     
-    // allocate one byte of memory for storage
+    // allocate memory for storage
     // kmalloc is just like malloc, the second parameter is
     // the type of memory to be allocated.
     // To release the memory allocated by kmalloc, use kfree.
-    onebyte_data = kmalloc(sizeof(char), GFP_KERNEL);
-    if (!onebyte_data) {
-        onebyte_exit();
+    data = kmalloc(sizeof(char) * SCULL_SIZE, GFP_KERNEL);
+    if (!data) {
+        scull_exit();
         // cannot allocate memory
         // return no memory error, negative signify a failure
         return -ENOMEM;
     }
     
-    // initialize the value to be X
-    *onebyte_data = 'X';
-    printk(KERN_ALERT "This is a onebyte device module\n");
+    data_size = 0;
+    printk(KERN_ALERT "This is a 4MB device module\n");
     return 0;
 }
 
-static void onebyte_exit(void)
+static void scull_exit(void)
 {
     // if the pointer is pointing to something
-    if (onebyte_data) {
+    if (data) {
         // free the memory and assign the pointer to NULL
-        kfree(onebyte_data);
-        onebyte_data = NULL;
+        kfree(data);
+        data = NULL;
     }
     
     // unregister the device
-    unregister_chrdev(MAJOR_NUMBER, "onebyte");
-    printk(KERN_ALERT "Onebyte device module is unloaded\n");
+    unregister_chrdev(MAJOR_NUMBER, "scull");
+    printk(KERN_ALERT "4MB device module is unloaded\n");
 }
 
+
 MODULE_LICENSE("GPL");
-module_init(onebyte_init);
-module_exit(onebyte_exit);
+module_init(scull_init);
+module_exit(scull_exit);
